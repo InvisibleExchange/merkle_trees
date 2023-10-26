@@ -1,12 +1,13 @@
 pub mod utils;
 
-use std::{collections::HashMap, error::Error, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
+use starknet_crypto::FieldElement;
 use utils::{
     parallelization::{split_and_run_first_row, split_and_run_next_row},
-    storage::{_from_disk_inner, _store_to_disk_inner},
+    // storage::{_from_disk_inner, _store_to_disk_inner},
     tree_utils::{idx_to_binary_pos, inner_from_leaf_nodes_vr, pad_leaf_nodes_vr, proof_pos},
 };
 
@@ -14,21 +15,21 @@ use crate::utils::tree_utils::get_zero_hash;
 
 #[derive(Debug, Clone)]
 pub struct Tree {
-    pub leaf_nodes: Vec<String>,
-    pub inner_nodes: Vec<Vec<String>>,
+    pub leaf_nodes: Vec<FieldElement>,
+    pub inner_nodes: Vec<Vec<FieldElement>>,
     pub depth: u32,
-    pub root: String,
+    pub root: FieldElement,
     pub shift: u32, // in case of a root tree we can start at a different depth
 }
 
 impl Tree {
     pub fn new(depth: u32, shift: u32) -> Tree {
-        let leaf_nodes: Vec<String> = Vec::new();
-        let mut inner_nodes: Vec<Vec<String>> = Vec::new();
+        let leaf_nodes: Vec<FieldElement> = Vec::new();
+        let mut inner_nodes: Vec<Vec<FieldElement>> = Vec::new();
         let root = get_zero_hash(depth, shift);
 
         for _ in 0..depth {
-            let empty_vec: Vec<String> = Vec::new();
+            let empty_vec: Vec<FieldElement> = Vec::new();
             inner_nodes.push(empty_vec);
         }
 
@@ -51,7 +52,7 @@ impl Tree {
     /// * `preimage` - the json_map to be filed with the preimage hashes
     pub fn batch_transition_updates(
         &mut self,
-        updated_hashes: &HashMap<u64, String>,
+        updated_hashes: &HashMap<u64, FieldElement>,
         preimage: &mut Map<String, Value>,
     ) {
         //
@@ -79,7 +80,7 @@ impl Tree {
     // -----------------------------------------------------------------
     // HELPERS
 
-    fn update_leaf_node(&mut self, leaf_hash: &String, idx: u64) {
+    fn update_leaf_node(&mut self, leaf_hash: &FieldElement, idx: u64) {
         assert!(idx < 2_u64.pow(self.depth), "idx is greater than tree size");
 
         if self.leaf_nodes.len() > idx as usize {
@@ -88,14 +89,14 @@ impl Tree {
             let len_diff = idx as usize - self.leaf_nodes.len();
 
             for _ in 0..len_diff {
-                self.leaf_nodes.push("0".to_string());
+                self.leaf_nodes.push(FieldElement::ZERO);
             }
 
             self.leaf_nodes.push(leaf_hash.clone())
         }
     }
 
-    fn update_inner_node(&mut self, i: u32, j: u64, value: String) {
+    fn update_inner_node(&mut self, i: u32, j: u64, value: FieldElement) {
         assert!(i <= self.depth, "i is greater than depth");
         assert!(j < 2_u64.pow(self.depth - i), "j is greater than 2^i");
 
@@ -112,7 +113,7 @@ impl Tree {
         }
     }
 
-    fn nth_leaf_node(&self, n: u64) -> String {
+    fn nth_leaf_node(&self, n: u64) -> FieldElement {
         assert!(n < 2_u64.pow(self.depth), "n is bigger than tree size");
 
         if self.leaf_nodes.get(n as usize).is_some() {
@@ -122,7 +123,7 @@ impl Tree {
         }
     }
 
-    fn ith_inner_node(&self, i: u32, j: u64) -> String {
+    fn ith_inner_node(&self, i: u32, j: u64) -> FieldElement {
         // ? Checks if the inner note at that spot exists, else it returns the zero hash
 
         assert!(i <= self.depth, "i is greater than depth");
@@ -141,31 +142,31 @@ impl Tree {
 
     // I/O Operations --------------------------------------------------
 
-    /// Stores the tree to disk. Tree index is the index of the tree in the storage folder.
-    pub fn store_to_disk(&self, tree_index: u32) -> Result<(), Box<dyn Error>> {
-        _store_to_disk_inner(
-            &self.leaf_nodes,
-            &self.inner_nodes,
-            &self.root,
-            self.depth,
-            tree_index,
-        )
-    }
+    // /// Stores the tree to disk. Tree index is the index of the tree in the storage folder.
+    // pub fn store_to_disk(&self, tree_index: u32) -> Result<(), Box<dyn Error>> {
+    //     _store_to_disk_inner(
+    //         &self.leaf_nodes,
+    //         &self.inner_nodes,
+    //         &self.root,
+    //         self.depth,
+    //         tree_index,
+    //     )
+    // }
 
-    /// Fetches the tree stored on disk and reconstructs it.
-    pub fn from_disk(tree_index: u32, depth: u32, shift: u32) -> Result<Tree, Box<dyn Error>> {
-        _from_disk_inner(tree_index, depth, shift)
-    }
+    // /// Fetches the tree stored on disk and reconstructs it.
+    // pub fn from_disk(tree_index: u32, depth: u32, shift: u32) -> Result<Tree, Box<dyn Error>> {
+    //     _from_disk_inner(tree_index, depth, shift)
+    // }
 
     // -----------------------------------------------------------------
 
     /// Get the merkle proof for a leaf node.
-    pub fn get_proof(&self, leaf_idx: u64) -> (Vec<String>, Vec<i8>) {
+    pub fn get_proof(&self, leaf_idx: u64) -> (Vec<FieldElement>, Vec<i8>) {
         let proof_binary_pos = idx_to_binary_pos(leaf_idx, self.depth as usize);
 
         let proof_pos = proof_pos(leaf_idx, self.depth as usize);
 
-        let mut proof: Vec<String> = Vec::new();
+        let mut proof: Vec<FieldElement> = Vec::new();
         proof.push(self.nth_leaf_node(proof_pos[0]));
 
         for i in 1..self.depth {
@@ -181,9 +182,10 @@ impl Tree {
 
     /// Testing function that hashes the tree from the leaf nodes and checks if the root is correct (non-optimized)
     pub fn verify_root(&self) -> bool {
-        let leaf_nodes = pad_leaf_nodes_vr(&self.leaf_nodes, self.depth as usize, "0".to_string());
+        let leaf_nodes =
+            pad_leaf_nodes_vr(&self.leaf_nodes, self.depth as usize, FieldElement::ZERO);
 
-        let inner_nodes: Vec<Vec<String>> =
+        let inner_nodes: Vec<Vec<FieldElement>> =
             inner_from_leaf_nodes_vr(self.depth as usize, &leaf_nodes);
         let root = inner_nodes[0][0].clone();
 
@@ -199,9 +201,6 @@ impl Tree {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use crate::Tree;
 
     #[test]
     fn test1() -> Result<(), Box<dyn std::error::Error>> {
@@ -209,7 +208,7 @@ mod tests {
 
         // let mut updated_hashes = HashMap::new();
         // for i in (0..100_000).into_iter().step_by(4) {
-        //     updated_hashes.insert(i, String::from(i));
+        //     updated_hashes.insert(i, FieldElement::from(i));
         // }
 
         // let mut preimage = serde_json::Map::new();

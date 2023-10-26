@@ -11,7 +11,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut updated_hashes = HashMap::new();
     for i in (0..1000).into_iter().step_by(4) {
-        updated_hashes.insert(i, i.to_string());
+        updated_hashes.insert(
+            i as u64,
+            FieldElement::from_dec_str(i.to_string().as_str()).unwrap(),
+        );
     }
 
     let mut preimage = serde_json::Map::new();

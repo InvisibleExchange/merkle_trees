@@ -1,12 +1,13 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc};
 
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
-use starknet_crypto::{pedersen_hash, FieldElement};
+use starknet_crypto::FieldElement;
 
-use crate::{utils::pedersen, Tree};
-
-use super::tree_utils::get_zero_hash;
+use crate::{
+    utils::{pedersen, tree_utils::get_zero_hash},
+    Tree,
+};
 
 // * =================================================================================================================
 // * HELPER FUNCTION FOR PARALLEL UPDATES
@@ -15,8 +16,8 @@ const STRIDE: usize = 250; // Must be even
 
 pub fn split_and_run_first_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
+    updated_hashes: &HashMap<u64, FieldElement>,
     n: usize,
 ) -> HashMap<u64, FieldElement> {
     let next_row_proofs: HashMap<u64, FieldElement> = HashMap::new();
@@ -25,7 +26,7 @@ pub fn split_and_run_first_row(
     split_and_run_first_row_inner(
         tree_mutex,
         preimage_mutex,
-        update_proofs,
+        updated_hashes,
         &next_row_proofs_mutex,
         n,
     );
@@ -36,16 +37,19 @@ pub fn split_and_run_first_row(
 
 fn split_and_run_first_row_inner(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
+    updated_hashes: &HashMap<u64, FieldElement>,
     next_row: &Arc<Mutex<HashMap<u64, FieldElement>>>,
     n: usize,
 ) {
     // ? n counts how deep in the recursion loop we are
     // ? at each iteration we take four elements from the hashmap and update the tree
 
-    let elems: Vec<(&u64, &FieldElement)> =
-        update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
+    let elems: Vec<(&u64, &FieldElement)> = updated_hashes
+        .iter()
+        .skip(n * STRIDE)
+        .take(STRIDE)
+        .collect();
 
     // ? As long as there are elements in the map (elems.len() > 0) we keep splitting
     // ? Pass the rest forward recursively to run in parallel
@@ -53,7 +57,7 @@ fn split_and_run_first_row_inner(
         rayon::join(
             || {
                 let next_row_indexes =
-                    build_first_row(tree_mutex, preimage_mutex, elems, update_proofs);
+                    build_first_row(tree_mutex, preimage_mutex, elems, updated_hashes);
                 let mut next_proofs = next_row.lock();
                 for (i, prev_res) in next_row_indexes {
                     next_proofs.insert(i, prev_res);
@@ -64,7 +68,7 @@ fn split_and_run_first_row_inner(
                 split_and_run_first_row_inner(
                     tree_mutex,
                     preimage_mutex,
-                    update_proofs,
+                    updated_hashes,
                     next_row,
                     n + 1,
                 )
@@ -77,8 +81,8 @@ fn split_and_run_first_row_inner(
 
 pub fn split_and_run_next_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
+    updated_hashes: &HashMap<u64, FieldElement>,
     row_depth: usize,
     n: usize,
 ) -> HashMap<u64, FieldElement> {
@@ -88,7 +92,7 @@ pub fn split_and_run_next_row(
     split_and_run_next_row_inner(
         tree_mutex,
         preimage_mutex,
-        update_proofs,
+        updated_hashes,
         &next_row_proofs_mutex,
         row_depth,
         n,
@@ -100,8 +104,8 @@ pub fn split_and_run_next_row(
 
 fn split_and_run_next_row_inner(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
+    updated_hashes: &HashMap<u64, FieldElement>,
     next_row: &Arc<Mutex<HashMap<u64, FieldElement>>>,
     row_depth: usize,
     n: usize,
@@ -109,8 +113,11 @@ fn split_and_run_next_row_inner(
     // ? n counts how deep in the recursion loop we are
     // ? at each iteration we take four elements from the hashmap and update the tree
 
-    let elems: Vec<(&u64, &FieldElement)> =
-        update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
+    let elems: Vec<(&u64, &FieldElement)> = updated_hashes
+        .iter()
+        .skip(n * STRIDE)
+        .take(STRIDE)
+        .collect();
 
     // ? As long as there are elements in the map (elems.len() > 0) we keep splitting
     // ? Pass the rest forward recursively to run in parallel
@@ -118,7 +125,7 @@ fn split_and_run_next_row_inner(
         rayon::join(
             || {
                 let next_row_indexes =
-                    build_next_row(tree_mutex, preimage_mutex, elems, update_proofs, row_depth);
+                    build_next_row(tree_mutex, preimage_mutex, elems, updated_hashes, row_depth);
                 let mut next_proofs = next_row.lock();
                 for (i, prev_res) in next_row_indexes {
                     next_proofs.insert(i, prev_res);
@@ -129,7 +136,7 @@ fn split_and_run_next_row_inner(
                 split_and_run_next_row_inner(
                     tree_mutex,
                     preimage_mutex,
-                    update_proofs,
+                    updated_hashes,
                     next_row,
                     row_depth,
                     n + 1,
@@ -143,7 +150,7 @@ fn split_and_run_next_row_inner(
 
 fn build_first_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
     entries: Vec<(&u64, &FieldElement)>, // 4 entries taken from the hashmap to be updated in parallel
     hashes: &HashMap<u64, FieldElement>, // the whole hashmap
 ) -> Vec<(u64, FieldElement)> {
@@ -152,8 +159,6 @@ fn build_first_row(
     let mut next_row: Vec<(u64, FieldElement)> = Vec::new();
 
     for (idx, hash) in entries.iter() {
-        let n = Instant::now();
-
         // ! Left child
         if *idx % 2 == 0 {
             //? If the right child exists, hash them together in the next loop
@@ -169,7 +174,7 @@ fn build_first_row(
                 drop(tree);
 
                 // ? Hash the left child with the right child
-                let new_hash = pedersen_hash(&hash, &right_hash);
+                let new_hash = pedersen(&hash, &right_hash);
 
                 // ? Use the new_hash to update the merkle tree
                 let mut tree = tree_mutex.lock();
@@ -184,18 +189,14 @@ fn build_first_row(
                 // ? Insert the new hash info into the preimage
                 let mut preimage = preimage_mutex.lock();
 
-                if !preimage.contains_key(&prev_res_hash.to_string()) {
+                if !preimage.contains_key(&prev_res_hash) {
                     preimage.insert(
-                        prev_res_hash.to_string(),
-                        serde_json::to_value([init_left_hash.to_string(), right_hash.to_string()])
-                            .unwrap(),
+                        prev_res_hash,
+                        serde_json::to_value([init_left_hash, right_hash]).unwrap(),
                     );
                 }
 
-                preimage.insert(
-                    new_hash.to_string(),
-                    serde_json::to_value([hash.to_string(), right_hash.to_string()]).unwrap(),
-                );
+                preimage.insert(new_hash, serde_json::to_value([hash, right_hash]).unwrap());
                 drop(preimage);
 
                 // * Preimages -----------------------------------------------------------------------------------------------
@@ -251,18 +252,14 @@ fn build_first_row(
             // ? Insert the new hash info into the preimage
             let mut preimage = preimage_mutex.lock();
 
-            if !preimage.contains_key(&prev_res_hash.to_string()) {
+            if !preimage.contains_key(&prev_res_hash) {
                 preimage.insert(
-                    prev_res_hash.to_string(),
-                    serde_json::to_value([prev_left_hash.to_string(), prev_right_hash.to_string()])
-                        .unwrap(),
+                    prev_res_hash,
+                    serde_json::to_value([prev_left_hash, prev_right_hash]).unwrap(),
                 );
             }
 
-            preimage.insert(
-                new_hash.to_string(),
-                serde_json::to_value([left_hash.to_string(), hash.to_string()]).unwrap(),
-            );
+            preimage.insert(new_hash, serde_json::to_value([left_hash, hash]).unwrap());
             drop(preimage);
 
             // * Preimages -----------------------------------------------------------------------------------------------
@@ -274,7 +271,7 @@ fn build_first_row(
 
 fn build_next_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
-    preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
+    preimage_mutex: &Arc<Mutex<&mut Map<FieldElement, Value>>>,
     entries: Vec<(&u64, &FieldElement)>, // 4 entries taken from the hashmap to be updated in parallel
     hashes: &HashMap<u64, FieldElement>, // the whole hashmap
     row_depth: usize,
@@ -314,19 +311,15 @@ fn build_next_row(
                 let mut preimage = preimage_mutex.lock();
 
                 // ? Previous batch state preimage
-                if !preimage.contains_key(&prev_res_hash.to_string()) {
+                if !preimage.contains_key(&prev_res_hash) {
                     preimage.insert(
-                        prev_res_hash.to_string(),
-                        serde_json::to_value([prev_res.to_string(), right_hash.to_string()])
-                            .unwrap(),
+                        prev_res_hash,
+                        serde_json::to_value([prev_res, right_hash]).unwrap(),
                     );
                 }
 
                 // ? Current batch state preimage
-                preimage.insert(
-                    new_hash.to_string(),
-                    serde_json::to_value([hash.to_string(), right_hash.to_string()]).unwrap(),
-                );
+                preimage.insert(new_hash, serde_json::to_value([hash, right_hash]).unwrap());
                 drop(preimage);
 
                 // * Preimages -----------------------------------------------------------------------------------------------
@@ -366,19 +359,15 @@ fn build_next_row(
             let mut preimage = preimage_mutex.lock();
 
             // ? Previous batch state preimage
-            if !preimage.contains_key(&prev_res_hash.to_string()) {
+            if !preimage.contains_key(&prev_res_hash) {
                 preimage.insert(
-                    prev_res_hash.to_string(),
-                    serde_json::to_value([prev_left_hash.to_string(), prev_right_hash.to_string()])
-                        .unwrap(),
+                    prev_res_hash,
+                    serde_json::to_value([prev_left_hash, prev_right_hash]).unwrap(),
                 );
             }
 
             // ? Current batch state preimage
-            preimage.insert(
-                new_hash.to_string(),
-                serde_json::to_value([left_hash.to_string(), hash.to_string()]).unwrap(),
-            );
+            preimage.insert(new_hash, serde_json::to_value([left_hash, hash]).unwrap());
             drop(preimage);
 
             // * Preimages -----------------------------------------------------------------------------------------------
