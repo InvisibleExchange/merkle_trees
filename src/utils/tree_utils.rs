@@ -1,4 +1,4 @@
-use starknet_crypto::FieldElement;
+use num_bigint::BigUint;
 
 use super::pedersen;
 
@@ -58,17 +58,14 @@ pub fn proof_pos(leaf_idx: u64, depth: usize) -> Vec<u64> {
 // * verify_root helpers
 
 /// this builds the entire tree from the leaf nodes. It is only used in the verify_root function.
-pub fn inner_from_leaf_nodes_vr(
-    depth: usize,
-    leaf_nodes: &Vec<FieldElement>,
-) -> Vec<Vec<FieldElement>> {
-    let mut tree: Vec<Vec<FieldElement>> = Vec::new();
+pub fn inner_from_leaf_nodes_vr(depth: usize, leaf_nodes: &Vec<BigUint>) -> Vec<Vec<BigUint>> {
+    let mut tree: Vec<Vec<BigUint>> = Vec::new();
 
     // if leaf_nodes.len() % 2 == 1 {
-    //     leaf_nodes.push(FieldElement::from_i8(0).unwrap());
+    //     leaf_nodes.push(BigUint::from_i8(0).unwrap());
     // }
 
-    let mut hashes: Vec<FieldElement> = pairwise_hash_vr(&leaf_nodes, 0);
+    let mut hashes: Vec<BigUint> = pairwise_hash_vr(&leaf_nodes, 0);
 
     tree.push(hashes.clone());
 
@@ -81,13 +78,9 @@ pub fn inner_from_leaf_nodes_vr(
     return tree;
 }
 
-pub fn pad_leaf_nodes_vr(
-    arr: &Vec<FieldElement>,
-    depth: usize,
-    pad_value: FieldElement,
-) -> Vec<FieldElement> {
+pub fn pad_leaf_nodes_vr(arr: &Vec<BigUint>, depth: usize, pad_value: BigUint) -> Vec<BigUint> {
     let total_len = 2_usize.pow(depth as u32);
-    let mut new_arr: Vec<FieldElement> = arr.clone();
+    let mut new_arr: Vec<BigUint> = arr.clone();
     for _ in 0..total_len - arr.len() {
         new_arr.push(pad_value.clone());
     }
@@ -95,15 +88,15 @@ pub fn pad_leaf_nodes_vr(
     return new_arr;
 }
 
-pub fn pairwise_hash_vr(array: &Vec<FieldElement>, depth: u32) -> Vec<FieldElement> {
+pub fn pairwise_hash_vr(array: &Vec<BigUint>, depth: u32) -> Vec<BigUint> {
     let default_value = get_zero_hash(depth, 0);
 
-    let mut hashes: Vec<FieldElement> = Vec::new();
+    let mut hashes: Vec<BigUint> = Vec::new();
     for i in (0..array.len()).step_by(2) {
         let left = array.get(i).unwrap_or(&default_value);
         let right = array.get(i + 1).unwrap_or(&default_value);
 
-        let hash: FieldElement = pedersen(left, &right);
+        let hash: BigUint = pedersen(left, &right);
         hashes.push(hash);
     }
 
@@ -443,13 +436,13 @@ const ZERO_HASHES: [[u8; 32]; 64] = [
 // ];
 
 /// Get the zero hash for a given depth
-pub fn get_zero_hash(idx: u32, shift: u32) -> FieldElement {
+pub fn get_zero_hash(idx: u32, shift: u32) -> BigUint {
     let depth = idx + shift;
 
-    // let x1 = FieldElement::from_bytes_le(&ZERO_HASHES.get(depth as usize).unwrap().clone());
+    // let x1 = BigUint::from_bytes_le(&ZERO_HASHES.get(depth as usize).unwrap().clone());
 
     let mut bytes = ZERO_HASHES.get(depth as usize).unwrap().clone();
-    bytes.reverse();
+    // bytes.reverse();
 
-    return FieldElement::from_bytes_be(&bytes).unwrap();
+    return BigUint::from_bytes_le(&bytes);
 }

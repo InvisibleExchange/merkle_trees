@@ -2,9 +2,10 @@ pub mod utils;
 
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
+use num_bigint::BigUint;
+use num_traits::Zero;
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
-use starknet_crypto::FieldElement;
 use utils::{
     parallelization::{split_and_run_first_row, split_and_run_next_row},
     // storage::{_from_disk_inner, _store_to_disk_inner},
@@ -15,21 +16,21 @@ use crate::utils::tree_utils::get_zero_hash;
 
 #[derive(Debug, Clone)]
 pub struct Tree {
-    pub leaf_nodes: Vec<FieldElement>,
-    pub inner_nodes: Vec<Vec<FieldElement>>,
+    pub leaf_nodes: Vec<BigUint>,
+    pub inner_nodes: Vec<Vec<BigUint>>,
     pub depth: u32,
-    pub root: FieldElement,
+    pub root: BigUint,
     pub shift: u32, // in case of a root tree we can start at a different depth
 }
 
 impl Tree {
     pub fn new(depth: u32, shift: u32) -> Tree {
-        let leaf_nodes: Vec<FieldElement> = Vec::new();
-        let mut inner_nodes: Vec<Vec<FieldElement>> = Vec::new();
+        let leaf_nodes: Vec<BigUint> = Vec::new();
+        let mut inner_nodes: Vec<Vec<BigUint>> = Vec::new();
         let root = get_zero_hash(depth, shift);
 
         for _ in 0..depth {
-            let empty_vec: Vec<FieldElement> = Vec::new();
+            let empty_vec: Vec<BigUint> = Vec::new();
             inner_nodes.push(empty_vec);
         }
 
@@ -52,7 +53,7 @@ impl Tree {
     /// * `preimage` - the json_map to be filed with the preimage hashes
     pub fn batch_transition_updates(
         &mut self,
-        updated_hashes: &HashMap<u64, FieldElement>,
+        updated_hashes: &HashMap<u64, BigUint>,
         preimage: &mut Map<String, Value>,
     ) {
         //
@@ -80,7 +81,7 @@ impl Tree {
     // -----------------------------------------------------------------
     // HELPERS
 
-    fn update_leaf_node(&mut self, leaf_hash: &FieldElement, idx: u64) {
+    fn update_leaf_node(&mut self, leaf_hash: &BigUint, idx: u64) {
         assert!(idx < 2_u64.pow(self.depth), "idx is greater than tree size");
 
         if self.leaf_nodes.len() > idx as usize {
@@ -89,14 +90,14 @@ impl Tree {
             let len_diff = idx as usize - self.leaf_nodes.len();
 
             for _ in 0..len_diff {
-                self.leaf_nodes.push(FieldElement::ZERO);
+                self.leaf_nodes.push(BigUint::zero());
             }
 
             self.leaf_nodes.push(leaf_hash.clone())
         }
     }
 
-    fn update_inner_node(&mut self, i: u32, j: u64, value: FieldElement) {
+    fn update_inner_node(&mut self, i: u32, j: u64, value: BigUint) {
         assert!(i <= self.depth, "i is greater than depth");
         assert!(j < 2_u64.pow(self.depth - i), "j is greater than 2^i");
 
@@ -113,7 +114,7 @@ impl Tree {
         }
     }
 
-    fn nth_leaf_node(&self, n: u64) -> FieldElement {
+    fn nth_leaf_node(&self, n: u64) -> BigUint {
         assert!(n < 2_u64.pow(self.depth), "n is bigger than tree size");
 
         if self.leaf_nodes.get(n as usize).is_some() {
@@ -123,7 +124,7 @@ impl Tree {
         }
     }
 
-    fn ith_inner_node(&self, i: u32, j: u64) -> FieldElement {
+    fn ith_inner_node(&self, i: u32, j: u64) -> BigUint {
         // ? Checks if the inner note at that spot exists, else it returns the zero hash
 
         assert!(i <= self.depth, "i is greater than depth");
@@ -161,12 +162,12 @@ impl Tree {
     // -----------------------------------------------------------------
 
     /// Get the merkle proof for a leaf node.
-    pub fn get_proof(&self, leaf_idx: u64) -> (Vec<FieldElement>, Vec<i8>) {
+    pub fn get_proof(&self, leaf_idx: u64) -> (Vec<BigUint>, Vec<i8>) {
         let proof_binary_pos = idx_to_binary_pos(leaf_idx, self.depth as usize);
 
         let proof_pos = proof_pos(leaf_idx, self.depth as usize);
 
-        let mut proof: Vec<FieldElement> = Vec::new();
+        let mut proof: Vec<BigUint> = Vec::new();
         proof.push(self.nth_leaf_node(proof_pos[0]));
 
         for i in 1..self.depth {
@@ -182,10 +183,9 @@ impl Tree {
 
     /// Testing function that hashes the tree from the leaf nodes and checks if the root is correct (non-optimized)
     pub fn verify_root(&self) -> bool {
-        let leaf_nodes =
-            pad_leaf_nodes_vr(&self.leaf_nodes, self.depth as usize, FieldElement::ZERO);
+        let leaf_nodes = pad_leaf_nodes_vr(&self.leaf_nodes, self.depth as usize, BigUint::zero());
 
-        let inner_nodes: Vec<Vec<FieldElement>> =
+        let inner_nodes: Vec<Vec<BigUint>> =
             inner_from_leaf_nodes_vr(self.depth as usize, &leaf_nodes);
         let root = inner_nodes[0][0].clone();
 
@@ -208,7 +208,7 @@ mod tests {
 
         // let mut updated_hashes = HashMap::new();
         // for i in (0..100_000).into_iter().step_by(4) {
-        //     updated_hashes.insert(i, FieldElement::from(i));
+        //     updated_hashes.insert(i, BigUint::from(i));
         // }
 
         // let mut preimage = serde_json::Map::new();

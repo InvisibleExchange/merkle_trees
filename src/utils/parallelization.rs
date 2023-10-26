@@ -1,8 +1,9 @@
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc};
 
+use num_bigint::BigUint;
+use num_traits::Zero;
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
-use starknet_crypto::{pedersen_hash, FieldElement};
 
 use crate::{utils::pedersen, Tree};
 
@@ -16,10 +17,10 @@ const STRIDE: usize = 250; // Must be even
 pub fn split_and_run_first_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    update_proofs: &HashMap<u64, BigUint>,
     n: usize,
-) -> HashMap<u64, FieldElement> {
-    let next_row_proofs: HashMap<u64, FieldElement> = HashMap::new();
+) -> HashMap<u64, BigUint> {
+    let next_row_proofs: HashMap<u64, BigUint> = HashMap::new();
     let next_row_proofs_mutex = Arc::new(Mutex::new(next_row_proofs));
 
     split_and_run_first_row_inner(
@@ -37,15 +38,14 @@ pub fn split_and_run_first_row(
 fn split_and_run_first_row_inner(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
-    next_row: &Arc<Mutex<HashMap<u64, FieldElement>>>,
+    update_proofs: &HashMap<u64, BigUint>,
+    next_row: &Arc<Mutex<HashMap<u64, BigUint>>>,
     n: usize,
 ) {
     // ? n counts how deep in the recursion loop we are
     // ? at each iteration we take four elements from the hashmap and update the tree
 
-    let elems: Vec<(&u64, &FieldElement)> =
-        update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
+    let elems: Vec<(&u64, &BigUint)> = update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
 
     // ? As long as there are elements in the map (elems.len() > 0) we keep splitting
     // ? Pass the rest forward recursively to run in parallel
@@ -78,11 +78,11 @@ fn split_and_run_first_row_inner(
 pub fn split_and_run_next_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
+    update_proofs: &HashMap<u64, BigUint>,
     row_depth: usize,
     n: usize,
-) -> HashMap<u64, FieldElement> {
-    let next_row_proofs: HashMap<u64, FieldElement> = HashMap::new();
+) -> HashMap<u64, BigUint> {
+    let next_row_proofs: HashMap<u64, BigUint> = HashMap::new();
     let next_row_proofs_mutex = Arc::new(Mutex::new(next_row_proofs));
 
     split_and_run_next_row_inner(
@@ -101,16 +101,15 @@ pub fn split_and_run_next_row(
 fn split_and_run_next_row_inner(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    update_proofs: &HashMap<u64, FieldElement>,
-    next_row: &Arc<Mutex<HashMap<u64, FieldElement>>>,
+    update_proofs: &HashMap<u64, BigUint>,
+    next_row: &Arc<Mutex<HashMap<u64, BigUint>>>,
     row_depth: usize,
     n: usize,
 ) {
     // ? n counts how deep in the recursion loop we are
     // ? at each iteration we take four elements from the hashmap and update the tree
 
-    let elems: Vec<(&u64, &FieldElement)> =
-        update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
+    let elems: Vec<(&u64, &BigUint)> = update_proofs.iter().skip(n * STRIDE).take(STRIDE).collect();
 
     // ? As long as there are elements in the map (elems.len() > 0) we keep splitting
     // ? Pass the rest forward recursively to run in parallel
@@ -144,16 +143,14 @@ fn split_and_run_next_row_inner(
 fn build_first_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    entries: Vec<(&u64, &FieldElement)>, // 4 entries taken from the hashmap to be updated in parallel
-    hashes: &HashMap<u64, FieldElement>, // the whole hashmap
-) -> Vec<(u64, FieldElement)> {
+    entries: Vec<(&u64, &BigUint)>, // 4 entries taken from the hashmap to be updated in parallel
+    hashes: &HashMap<u64, BigUint>, // the whole hashmap
+) -> Vec<(u64, BigUint)> {
     // next row stores the indexes of the next row that need to be updated
     // (and the previous result hashes for the init state preimage)
-    let mut next_row: Vec<(u64, FieldElement)> = Vec::new();
+    let mut next_row: Vec<(u64, BigUint)> = Vec::new();
 
     for (idx, hash) in entries.iter() {
-        let n = Instant::now();
-
         // ! Left child
         if *idx % 2 == 0 {
             //? If the right child exists, hash them together in the next loop
@@ -169,7 +166,7 @@ fn build_first_row(
                 drop(tree);
 
                 // ? Hash the left child with the right child
-                let new_hash = pedersen_hash(&hash, &right_hash);
+                let new_hash = pedersen(&hash, &right_hash);
 
                 // ? Use the new_hash to update the merkle tree
                 let mut tree = tree_mutex.lock();
@@ -209,9 +206,9 @@ fn build_first_row(
         // ! Right child
         else {
             // ? get the left child hash
-            let left_hash: FieldElement;
-            let prev_left_hash: FieldElement;
-            let prev_right_hash: FieldElement;
+            let left_hash: BigUint;
+            let prev_left_hash: BigUint;
+            let prev_right_hash: BigUint;
             if hashes.get(&(*idx - 1)).is_some() {
                 // ? If the left child exists, hash them together
                 left_hash = hashes.get(&(*idx - 1)).unwrap().clone();
@@ -275,13 +272,13 @@ fn build_first_row(
 fn build_next_row(
     tree_mutex: &Arc<Mutex<&mut Tree>>,
     preimage_mutex: &Arc<Mutex<&mut Map<String, Value>>>,
-    entries: Vec<(&u64, &FieldElement)>, // 4 entries taken from the hashmap to be updated in parallel
-    hashes: &HashMap<u64, FieldElement>, // the whole hashmap
+    entries: Vec<(&u64, &BigUint)>, // 4 entries taken from the hashmap to be updated in parallel
+    hashes: &HashMap<u64, BigUint>, // the whole hashmap
     row_depth: usize,
-) -> Vec<(u64, FieldElement)> {
+) -> Vec<(u64, BigUint)> {
     // next row stores the indexes of the next row that need to be updated
     // (and the previous result hashes for the init state preimage)
-    let mut next_row: Vec<(u64, FieldElement)> = Vec::new();
+    let mut next_row: Vec<(u64, BigUint)> = Vec::new();
 
     for (idx, prev_res) in entries.iter() {
         // ! Left child
@@ -339,7 +336,7 @@ fn build_next_row(
 
             let hash = &tree.ith_inner_node(row_depth as u32, **idx);
             let left_hash = &tree.ith_inner_node(row_depth as u32, *idx - 1);
-            let prev_left_hash: FieldElement;
+            let prev_left_hash: BigUint;
             if let Some(prev_left) = hashes.get(&(*idx - 1)) {
                 prev_left_hash = prev_left.clone();
             } else {
@@ -388,26 +385,21 @@ fn build_next_row(
     return next_row;
 }
 
-pub fn build_tree(depth: u32, leaf_nodes: &Vec<FieldElement>, shift: u32) -> FieldElement {
-    let inner_nodes: Vec<Vec<FieldElement>> =
-        inner_from_leaf_nodes(depth as usize, leaf_nodes, shift);
+pub fn build_tree(depth: u32, leaf_nodes: &Vec<BigUint>, shift: u32) -> BigUint {
+    let inner_nodes: Vec<Vec<BigUint>> = inner_from_leaf_nodes(depth as usize, leaf_nodes, shift);
     let root = inner_nodes[0][0].clone();
 
     return root;
 }
 
-fn inner_from_leaf_nodes(
-    depth: usize,
-    leaf_nodes: &Vec<FieldElement>,
-    shift: u32,
-) -> Vec<Vec<FieldElement>> {
-    let mut tree: Vec<Vec<FieldElement>> = Vec::new();
+fn inner_from_leaf_nodes(depth: usize, leaf_nodes: &Vec<BigUint>, shift: u32) -> Vec<Vec<BigUint>> {
+    let mut tree: Vec<Vec<BigUint>> = Vec::new();
 
     let first_row = leaf_nodes;
 
     let len = leaf_nodes.len();
     let new_len = if len % 2 == 0 { len / 2 } else { len / 2 + 1 };
-    let mut hashes: Vec<FieldElement> = vec![FieldElement::ZERO; new_len];
+    let mut hashes: Vec<BigUint> = vec![BigUint::zero(); new_len];
     let hashes_mutex = Arc::new(Mutex::new(&mut hashes));
     hash_tree_level(&hashes_mutex, &first_row, 0, 0, shift);
     tree.push(hashes);
@@ -415,7 +407,7 @@ fn inner_from_leaf_nodes(
     for i in 1..depth {
         let len = &tree[i - 1].len();
         let new_len = if len % 2 == 0 { len / 2 } else { len / 2 + 1 };
-        let mut hashes: Vec<FieldElement> = vec![FieldElement::ZERO; new_len];
+        let mut hashes: Vec<BigUint> = vec![BigUint::zero(); new_len];
         let hashes_mutex = Arc::new(Mutex::new(&mut hashes));
         hash_tree_level(&hashes_mutex, &tree[i - 1], i, 0, shift);
         tree.push(hashes);
@@ -426,8 +418,8 @@ fn inner_from_leaf_nodes(
 }
 
 fn hash_tree_level(
-    next_row: &Arc<Mutex<&mut Vec<FieldElement>>>,
-    leaf_nodes: &Vec<FieldElement>,
+    next_row: &Arc<Mutex<&mut Vec<BigUint>>>,
+    leaf_nodes: &Vec<BigUint>,
     i: usize,
     n: usize,
     shift: u32,
@@ -436,7 +428,7 @@ fn hash_tree_level(
         .iter()
         .skip(n * STRIDE)
         .take(STRIDE)
-        .collect::<Vec<&FieldElement>>();
+        .collect::<Vec<&BigUint>>();
 
     // println!("inp_array: {:?}", inp_array);
 
@@ -463,10 +455,10 @@ fn hash_tree_level(
     }
 }
 
-pub fn pairwise_hash(array: &Vec<&FieldElement>, i: usize, shift: u32) -> Vec<FieldElement> {
+pub fn pairwise_hash(array: &Vec<&BigUint>, i: usize, shift: u32) -> Vec<BigUint> {
     // This should be an array of STRIDE length
 
-    let mut hashes: Vec<FieldElement> = Vec::new();
+    let mut hashes: Vec<BigUint> = Vec::new();
     for j in (0..array.len() - 1).step_by(2) {
         let hash = pedersen(&array[j], &array[j + 1]);
         hashes.push(hash);

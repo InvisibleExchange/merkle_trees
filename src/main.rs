@@ -3,7 +3,6 @@ use std::{collections::HashMap, str::FromStr, time::Instant};
 use invisible_backend::{utils::tree_utils::get_zero_hash, Tree};
 use num_bigint::BigUint;
 use num_traits::Zero;
-use starknet_crypto::FieldElement;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,10 +10,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut updated_hashes = HashMap::new();
     for i in (0..1000).into_iter().step_by(4) {
-        updated_hashes.insert(
-            i as u64,
-            FieldElement::from_dec_str(i.to_string().as_str()).unwrap(),
-        );
+        updated_hashes.insert(i as u64, BigUint::from_str(i.to_string().as_str()).unwrap());
     }
 
     let mut preimage = serde_json::Map::new();
